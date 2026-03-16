@@ -9,14 +9,14 @@ echo "🚀 Starting Deployment..."
 echo "Fetching latest code from GitHub..."
 git pull origin main
 
-# Build and restart containers
-echo "Building and starting Docker containers..."
-docker compose up -d --build
+# Pull latest changes
+echo "Fetching latest code from GitHub..."
+git pull origin main
 
-# Prune old images to save space
-echo "Cleaning up old Docker images..."
-docker image prune -f
+echo "⚠️ Note: Docker has been removed. Please ensure your Node.js processes are restarted manually."
+echo "Backend: npm install && npm run start (in ./backend)"
+echo "Frontend: npm install && npm run build (in ./frontend)"
 
-echo "✅ Deployment Successful!"
+echo "✅ Deployment Scripts Updated!"
 echo "Backend: http://localhost:5000"
 echo "Frontend: http://localhost:3000"

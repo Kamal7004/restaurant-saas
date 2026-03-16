@@ -1,0 +1,27 @@
+services:
+  backend:
+    build: ./backend
+    restart: always
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+      - PGHOST=${PGHOST}
+      - PGUSER=${PGUSER}
+      - PGPASSWORD=${PGPASSWORD}
+      - PGDATABASE=${PGDATABASE}
+      - PGPORT=${PGPORT}
+      - JWT_SECRET=${JWT_SECRET}
+      - RESTAURANT_ID=${RESTAURANT_ID}
+    ports:
+      - "5000:5000"
+
+  frontend:
+    build: ./frontend
+    restart: always
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+      - NEXT_PUBLIC_SOCKET_URL=${NEXT_PUBLIC_SOCKET_URL}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend

@@ -3,14 +3,15 @@
 import { useEffect, useState } from 'react';
 import { orderApi } from '@/lib/api';
 import { Order } from '@/lib/types';
-import { formatCurrency, formatTime, STATUS_COLORS, STATUS_LABELS } from '@/lib/utils';
+import { formatTime } from '@/lib/utils';
 import { getSocket, joinKitchen } from '@/lib/socket';
-
-const RESTAURANT_ID = process.env.NEXT_PUBLIC_RESTAURANT_ID!;
+import { getUser } from '@/lib/auth';
 
 export default function KitchenPage() {
+  const user = getUser();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [waiterCalls, setWaiterCalls] = useState<any[]>([]);
 
   const loadOrders = async () => {
     try {
@@ -21,16 +22,38 @@ export default function KitchenPage() {
   };
 
   useEffect(() => {
+    if (!user?.restaurant_id) return;
+    
     loadOrders();
     const socket = getSocket();
-    joinKitchen(RESTAURANT_ID);
-    socket.on('NEW_ORDER', () => { loadOrders(); playSound(); });
+    joinKitchen(user.restaurant_id);
+    
+    socket.on('NEW_ORDER', (order) => { 
+      loadOrders(); 
+      playSound('new_order'); 
+    });
+    
     socket.on('ORDER_UPDATED', () => loadOrders());
-    return () => { socket.off('NEW_ORDER'); socket.off('ORDER_UPDATED'); };
-  }, []);
+    
+    socket.on('WAITER_CALL', (call) => {
+      setWaiterCalls(prev => [call, ...prev].slice(0, 5));
+      playSound('waiter_call');
+    });
 
-  const playSound = () => {
-    try { new Audio('data:audio/wav;base64,UklGRl9vT19teleGFyRm10IBAAAAEAAQARIwAAEkAAAAEACABkYXRhQW9P').play().catch(() => {}); } catch {}
+    return () => { 
+      socket.off('NEW_ORDER'); 
+      socket.off('ORDER_UPDATED'); 
+      socket.off('WAITER_CALL');
+    };
+  }, [user?.restaurant_id]);
+
+  const playSound = (type: string) => {
+    try { 
+      const audio = new Audio(type === 'new_order' 
+        ? 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3' 
+        : 'https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3');
+      audio.play().catch(() => {}); 
+    } catch {}
   };
 
   const updateStatus = async (orderId: string, status: string) => {
@@ -38,78 +61,123 @@ export default function KitchenPage() {
     catch (err) { console.error(err); }
   };
 
-  const pendingOrders = orders.filter(o => o.status === 'pending');
-  const preparingOrders = orders.filter(o => o.status === 'preparing');
-  const readyOrders = orders.filter(o => o.status === 'ready');
+  const ordersByStatus = {
+    pending: orders.filter(o => o.status === 'pending'),
+    preparing: orders.filter(o => o.status === 'preparing'),
+    ready: orders.filter(o => o.status === 'ready'),
+  };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-dark-900"><div className="w-10 h-10 border-4 border-brand-500 border-t-transparent rounded-full animate-spin" /></div>;
-
-  const Column = ({ title, icon, orders: colOrders, color }: { title: string; icon: string; orders: Order[]; color: string }) => (
-    <div className="flex-1 min-w-[300px]">
-      <div className={`flex items-center gap-2 px-4 py-3 rounded-t-xl ${color}`}>
-        <span className="text-xl">{icon}</span>
-        <span className="font-bold text-white">{title}</span>
-        <span className="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full ml-auto">{colOrders.length}</span>
-      </div>
-      <div className="space-y-3 mt-3">
-        {colOrders.map(order => (
-          <div key={order.id} className="bg-stone-800 rounded-xl p-4 border border-stone-700">
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-mono font-bold text-white text-lg">#{order.order_number}</span>
-              <span className="text-stone-400 text-xs">{formatTime(order.created_at)}</span>
-            </div>
-            <p className="text-stone-400 text-xs mb-3">Table {order.table_number || '—'} {order.customer_name ? `• ${order.customer_name}` : ''}</p>
-            <div className="space-y-1 mb-3">
-              {order.items?.map(item => (
-                <div key={item.id} className="flex items-center justify-between text-sm">
-                  <span className="text-stone-300">{item.quantity}× {item.name}</span>
-                  {item.special_instructions && <span className="text-amber-400 text-xs">⚠️</span>}
-                </div>
-              ))}
-            </div>
-            {order.customer_notes && <p className="text-amber-400 text-xs mb-3 italic">💬 {order.customer_notes}</p>}
-            <div className="flex gap-2">
-              {order.status === 'pending' && (
-                <button onClick={() => updateStatus(order.id, 'preparing')}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-sm font-bold transition-colors">
-                  🔥 Start
-                </button>
-              )}
-              {order.status === 'preparing' && (
-                <button onClick={() => updateStatus(order.id, 'ready')}
-                  className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg text-sm font-bold transition-colors">
-                  ✅ Ready
-                </button>
-              )}
-              {order.status === 'ready' && (
-                <button onClick={() => updateStatus(order.id, 'served')}
-                  className="flex-1 bg-stone-600 hover:bg-stone-500 text-white py-2 rounded-lg text-sm font-bold transition-colors">
-                  🍽️ Served
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
-        {colOrders.length === 0 && (
-          <div className="text-center py-10 text-stone-500 text-sm">No orders</div>
-        )}
-      </div>
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center bg-dark-950">
+      <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-dark-900 p-4">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">👨‍🍳</span>
-          <h1 className="text-2xl font-bold text-white">Kitchen Display</h1>
+    <div className="min-h-screen bg-dark-950 text-white p-6">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
+        <div>
+          <div className="flex items-center gap-3">
+            <span className="text-3xl">👨‍🍳</span>
+            <h1 className="text-3xl font-black tracking-tighter uppercase">Kitchen Control</h1>
+          </div>
+          <p className="text-stone-500 text-xs font-bold uppercase tracking-widest mt-1">Real-time Order Processing Station</p>
         </div>
-        <button onClick={loadOrders} className="text-stone-400 hover:text-white text-sm transition-colors">↻ Refresh</button>
+        
+        <div className="flex gap-4">
+          <button onClick={loadOrders} className="h-12 px-6 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 transition-all text-xs font-black uppercase tracking-widest">
+            Refresh Feed
+          </button>
+        </div>
       </div>
-      <div className="flex gap-4 overflow-x-auto pb-4">
-        <Column title="Pending" icon="⏳" orders={pendingOrders} color="bg-amber-600" />
-        <Column title="Preparing" icon="🔥" orders={preparingOrders} color="bg-blue-600" />
-        <Column title="Ready" icon="✅" orders={readyOrders} color="bg-green-600" />
+
+      {/* Waiter Calls Notifications */}
+      {waiterCalls.length > 0 && (
+        <div className="mb-10 animate-bounce-in">
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-[2rem] p-6 flex flex-wrap gap-4 items-center">
+            <span className="text-amber-500 font-black text-xs uppercase tracking-widest mr-4">🙋‍♂️ Assistance Requested:</span>
+            {waiterCalls.map((call, i) => (
+              <div key={i} className="bg-amber-500 text-dark-900 px-4 py-2 rounded-xl font-black text-sm animate-pulse-slow">
+                Table {call.table_number}
+              </div>
+            ))}
+            <button onClick={() => setWaiterCalls([])} className="ml-auto text-amber-500/50 hover:text-amber-500 font-bold text-xs uppercase">Dismiss All</button>
+          </div>
+        </div>
+      )}
+
+      {/* Order Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {[
+          { id: 'pending', title: 'New Orders', icon: '⏳', color: 'amber', orders: ordersByStatus.pending, action: 'Start Prep', nextStatus: 'preparing' },
+          { id: 'preparing', title: 'In Preparation', icon: '🔥', color: 'blue', orders: ordersByStatus.preparing, action: 'Mark Ready', nextStatus: 'ready' },
+          { id: 'ready', title: 'Ready for Pickup', icon: '✅', color: 'emerald', orders: ordersByStatus.ready, action: 'Served', nextStatus: 'served' },
+        ].map(col => (
+          <div key={col.id} className="flex flex-col h-[calc(100vh-280px)] min-h-[500px]">
+            <div className="flex items-center justify-between mb-4 px-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{col.icon}</span>
+                <span className="font-black text-sm uppercase tracking-widest text-stone-400">{col.title}</span>
+              </div>
+              <span className={`px-3 py-1 rounded-full bg-${col.color}-500/10 text-${col.color}-500 text-[10px] font-black`}>
+                {col.orders.length}
+              </span>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto space-y-4 pr-2 scrollbar-hide">
+              {col.orders.map(order => (
+                <div key={order.id} className="bg-white/5 border border-white/5 rounded-[2rem] p-6 hover:bg-white/10 transition-all group">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <span className="font-mono font-black text-2xl text-white">#{order.order_number}</span>
+                      <p className="text-[10px] text-stone-500 font-bold uppercase tracking-wider mt-1">
+                        Table {order.table_number} {order.customer_name ? `• ${order.customer_name}` : ''}
+                      </p>
+                    </div>
+                    <span className="text-stone-500 font-mono text-[10px]">{formatTime(order.created_at)}</span>
+                  </div>
+
+                  <div className="space-y-3 mb-6">
+                    {order.items?.map(item => (
+                      <div key={item.id} className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <p className="text-white font-bold text-sm tracking-tight">{item.quantity}× {item.name}</p>
+                          {item.special_instructions && (
+                            <p className="text-amber-400 text-[10px] font-bold mt-1 uppercase italic underline decoration-amber-400/30">
+                              ⚠️ {item.special_instructions}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {order.customer_notes && (
+                    <div className="mb-6 p-3 rounded-xl bg-amber-500/5 border border-amber-500/10">
+                      <p className="text-amber-400 text-[11px] font-bold italic leading-relaxed">
+                        💬 {order.customer_notes}
+                      </p>
+                    </div>
+                  )}
+
+                  <button 
+                    onClick={() => updateStatus(order.id, col.nextStatus)}
+                    className={`w-full h-12 rounded-2xl bg-${col.color}-500 hover:bg-${col.color}-600 text-white font-black uppercase tracking-widest text-xs transition-all shadow-lg active:scale-95`}
+                    style={{ backgroundColor: col.color === 'amber' ? '#d97706' : col.color === 'blue' ? '#2563eb' : '#059669' }}
+                  >
+                    {col.action} →
+                  </button>
+                </div>
+              ))}
+              {col.orders.length === 0 && (
+                <div className="h-40 border-2 border-dashed border-white/5 rounded-[2rem] flex items-center justify-center text-stone-600 text-xs font-bold uppercase tracking-widest">
+                  Station Empty
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

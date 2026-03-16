@@ -10,6 +10,7 @@ const navItems = [
   { href: '/admin/menu', label: 'Menu', icon: '🍕' },
   { href: '/admin/orders', label: 'Orders', icon: '📋' },
   { href: '/admin/tables', label: 'Tables', icon: '🪑' },
+  { href: '/admin/settings', label: 'Settings', icon: '⚙️' },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

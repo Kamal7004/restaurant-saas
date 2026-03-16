@@ -7,31 +7,50 @@ on:
     branches: [ main ]
 
 jobs:
-  build-backend:
+  build-and-package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install dependencies
-        run: cd backend && npm install
-      - name: Build check
-        run: cd backend && node --check server.js
+          
+      - name: Install and check Backend
+        run: |
+          cd backend
+          npm install
+          node --check server.js
+          
+      - name: Build Frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+          
+      - name: Package Server
+        run: |
+          zip -r server.zip backend -x "backend/node_modules/*" "backend/.env" "backend/restaurant.db*"
+          
+      - name: Package Client
+        run: |
+          zip -r client.zip frontend/out
+          
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zips
+          path: |
+            server.zip
+            client.zip
 
-  build-frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Use Node.js
-        uses: actions/setup-node@v4
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
         with:
-          node-version: '20'
-      - name: Install dependencies
-        run: cd frontend && npm install
-      - name: Build Next.js
-        run: cd frontend && npm run build
+          files: |
+            server.zip
+            client.zip
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:5000
-          NEXT_PUBLIC_SOCKET_URL: http://localhost:5000
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

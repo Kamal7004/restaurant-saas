@@ -42,9 +42,24 @@ async function initializeDatabase() {
         phone VARCHAR(50),
         email VARCHAR(255),
         timezone VARCHAR(50) DEFAULT 'UTC',
+        primary_color VARCHAR(20) DEFAULT '#000000',
+        secondary_color VARCHAR(20) DEFAULT '#ffffff',
+        welcome_text TEXT DEFAULT 'Welcome to our restaurant!',
         is_active SMALLINT DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_restaurants_slug ON restaurants(slug);
+      CREATE INDEX IF NOT EXISTS idx_restaurants_active ON restaurants(is_active);
+
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id UUID PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        price DECIMAL(10, 2) NOT NULL,
+        features TEXT,
+        is_active SMALLINT DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
       CREATE TABLE IF NOT EXISTS users (
@@ -60,6 +75,8 @@ async function initializeDatabase() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT chk_role CHECK (role IN ('super_admin', 'admin', 'kitchen', 'staff'))
       );
+
+      ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS subscription_id UUID REFERENCES subscriptions(id) ON DELETE SET NULL;
 
       CREATE TABLE IF NOT EXISTS tables (
         id UUID PRIMARY KEY,

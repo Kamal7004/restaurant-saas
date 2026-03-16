@@ -81,6 +81,18 @@ export interface Restaurant {
   address: string;
   phone: string;
   email: string;
+  primary_color: string;
+  secondary_color: string;
+  welcome_text: string;
+  is_active: number;
+}
+
+export interface Subscription {
+  id: string;
+  name: string;
+  price: number;
+  features: string;
+  is_active: number;
 }
 
 export interface User {

@@ -4,43 +4,47 @@ const db = require('../db');
 const { authMiddleware } = require('./auth');
 
 const router = express.Router();
-const RESTAURANT_ID = process.env.RESTAURANT_ID || 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+const { checkRole } = require('./auth');
 
 // POST /api/orders
 router.post('/', async (req, res) => {
   try {
-    const { table_id, customer_name, customer_notes, items } = req.body;
+    const { table_id, customer_name, customer_notes, items, restaurant_id } = req.body;
+    
     if (!items || items.length === 0) {
       return res.status(400).json({ error: 'Order must have at least one item' });
     }
 
     const order = await db.transaction(async (client) => {
       // 1. Validate Table and get Restaurant ID
-      let restaurantId = RESTAURANT_ID; // Fallback
+      let targetRestaurantId = restaurant_id;
       if (table_id) {
         const { rows: tableRows } = await client.query('SELECT restaurant_id FROM tables WHERE id = $1', [table_id]);
         if (tableRows.length > 0) {
-          restaurantId = tableRows[0].restaurant_id;
+          targetRestaurantId = tableRows[0].restaurant_id;
         } else {
           throw new Error('Invalid table_id');
         }
       }
 
+      if (!targetRestaurantId) {
+        throw new Error('Restaurant ID is required');
+      }
+
       // 2. Fetch all menu items for this order in one query
       const menuItemIds = items.map(i => i.menu_item_id);
       const { rows: menuItems } = await client.query(
-        'SELECT * FROM menu_items WHERE id = ANY($1)',
-        [menuItemIds]
+        'SELECT * FROM menu_items WHERE id = ANY($1) AND restaurant_id = $2',
+        [menuItemIds, targetRestaurantId]
       );
       
       const menuItemMap = new Map(menuItems.map(mi => [mi.id, mi]));
 
       // 3. Calculate order number (Atomic within transaction)
-      // Use SELECT ... FOR UPDATE to prevent race conditions in numbering
-      await client.query('SELECT 1 FROM restaurants WHERE id = $1 FOR UPDATE', [restaurantId]);
+      await client.query('SELECT 1 FROM restaurants WHERE id = $1 FOR UPDATE', [targetRestaurantId]);
       const { rows: orderNumRows } = await client.query(
         'SELECT COALESCE(MAX(order_number), 0) as max_num FROM orders WHERE restaurant_id = $1',
-        [restaurantId]
+        [targetRestaurantId]
       );
       const orderNumber = parseInt(orderNumRows[0].max_num) + 1;
 
@@ -52,7 +56,7 @@ router.post('/', async (req, res) => {
       for (const item of items) {
         const menuItem = menuItemMap.get(item.menu_item_id);
         if (!menuItem) {
-          throw new Error(`Menu item not found: ${item.menu_item_id}`);
+          throw new Error(`Menu item not found or unauthorized: ${item.menu_item_id}`);
         }
 
         const qty = parseInt(item.quantity) || 1;
@@ -78,11 +82,11 @@ router.post('/', async (req, res) => {
         `INSERT INTO orders (id, restaurant_id, table_id, order_number, customer_name, customer_notes, subtotal, tax, total)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
-        [orderId, restaurantId, table_id || null, orderNumber, customer_name || null, customer_notes || null, subtotal, tax, total]
+        [orderId, targetRestaurantId, table_id || null, orderNumber, customer_name || null, customer_notes || null, subtotal, tax, total]
       );
       const insertedOrder = insertedOrderRows[0];
 
-      // 5. Insert Order Items (Multiple Insertion via loop, or could be unnest)
+      // 5. Insert Order Items
       for (const oi of orderItemsToInsert) {
         await client.query(
           `INSERT INTO order_items (id, order_id, menu_item_id, name, price, quantity, special_instructions)
@@ -91,7 +95,6 @@ router.post('/', async (req, res) => {
         );
       }
 
-      // Fetch final state with table info
       const { rows: infoRows } = await client.query(
         `SELECT t.table_number, t.name as table_name FROM tables t WHERE t.id = $1`,
         [table_id]
@@ -112,20 +115,43 @@ router.post('/', async (req, res) => {
     res.status(201).json(order);
   } catch (err) {
     console.error('ORDER_ERROR:', err.message);
-    res.status(err.message.includes('not found') ? 400 : 500).json({ 
+    res.status(err.message.includes('not found') || err.message.includes('required') ? 400 : 500).json({ 
       error: err.message || 'Failed to create order' 
     });
   }
 });
 
-// GET /api/orders
-router.get('/', authMiddleware, async (req, res) => {
+// POST /api/orders/call-waiter
+router.post('/call-waiter', async (req, res) => {
   try {
-    const status = req.query.status;
+    const { table_id } = req.body;
+    if (!table_id) return res.status(400).json({ error: 'table_id is required' });
+
+    const { rows } = await db.query('SELECT restaurant_id, table_number FROM tables WHERE id = $1', [table_id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Table not found' });
+
+    const { restaurant_id, table_number } = rows[0];
+
+    req.io.to(`restaurant_${restaurant_id}`).emit('WAITER_CALL', { table_id, table_number, timestamp: new Date() });
+    req.io.to(`kitchen_${restaurant_id}`).emit('WAITER_CALL', { table_id, table_number, timestamp: new Date() });
+
+    res.json({ message: 'Waiter called successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to call waiter' });
+  }
+});
+
+// GET /api/orders (Kitchen/Admin Only)
+router.get('/', authMiddleware, checkRole(['admin', 'kitchen']), async (req, res) => {
+  try {
+    const { status } = req.query;
+    const restaurantId = req.user.restaurant_id;
+
     let queryText = `SELECT o.*, t.table_number, t.name as table_name FROM orders o
                      LEFT JOIN tables t ON o.table_id = t.id
                      WHERE o.restaurant_id = $1`;
-    const params = [RESTAURANT_ID];
+    const params = [restaurantId];
 
     if (status) {
       queryText += ' AND o.status = $2';
@@ -145,15 +171,16 @@ router.get('/', authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/orders/active
-router.get('/active', async (req, res) => {
+// GET /api/orders/active (Kitchen Only)
+router.get('/active', authMiddleware, checkRole(['admin', 'kitchen']), async (req, res) => {
   try {
+    const restaurantId = req.user.restaurant_id;
     const { rows: orders } = await db.query(
       `SELECT o.*, t.table_number, t.name as table_name FROM orders o
        LEFT JOIN tables t ON o.table_id = t.id
        WHERE o.restaurant_id = $1 AND o.status IN ('pending', 'preparing', 'ready')
        ORDER BY o.created_at ASC`,
-      [RESTAURANT_ID]
+      [restaurantId]
     );
 
     for (const order of orders) {
@@ -167,44 +194,23 @@ router.get('/active', async (req, res) => {
   }
 });
 
-// GET /api/orders/:id
-router.get('/:id', async (req, res) => {
-  try {
-    const { rows } = await db.query(
-      `SELECT o.*, t.table_number, t.name as table_name FROM orders o
-       LEFT JOIN tables t ON o.table_id = t.id WHERE o.id = $1`,
-      [req.params.id]
-    );
-    const order = rows[0];
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-    
-    const { rows: items } = await db.query('SELECT * FROM order_items WHERE order_id = $1', [order.id]);
-    order.items = items;
-    res.json(order);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch order' });
-  }
-});
-
-// PUT /api/orders/:id/status
-router.put('/:id/status', authMiddleware, async (req, res) => {
+// PUT /api/orders/:id/status (Kitchen/Admin Only)
+router.put('/:id/status', authMiddleware, checkRole(['admin', 'kitchen']), async (req, res) => {
   try {
     const { status } = req.body;
+    const restaurantId = req.user.restaurant_id;
     const validStatuses = ['pending', 'preparing', 'ready', 'served', 'cancelled'];
+
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    let updateQuery = "UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP";
-    const params = [status, req.params.id];
-    
-    if (status === 'served') {
-      updateQuery += ", served_at = CURRENT_TIMESTAMP";
-    }
-    updateQuery += " WHERE id = $2";
+    const { rowCount } = await db.query(
+      "UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND restaurant_id = $3",
+      [status, req.params.id, restaurantId]
+    );
 
-    await db.query(updateQuery, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Order not found or unauthorized' });
 
     const { rows } = await db.query(
       `SELECT o.*, t.table_number, t.name as table_name FROM orders o
@@ -212,14 +218,12 @@ router.put('/:id/status', authMiddleware, async (req, res) => {
       [req.params.id]
     );
     const order = rows[0];
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-    
     const { rows: items } = await db.query('SELECT * FROM order_items WHERE order_id = $1', [order.id]);
     order.items = items;
 
     // Emit socket events
-    req.io.to(`restaurant_${RESTAURANT_ID}`).emit('ORDER_UPDATED', order);
-    req.io.to(`kitchen_${RESTAURANT_ID}`).emit('ORDER_UPDATED', order);
+    req.io.to(`restaurant_${restaurantId}`).emit('ORDER_UPDATED', order);
+    req.io.to(`kitchen_${restaurantId}`).emit('ORDER_UPDATED', order);
     if (order.table_id) {
       req.io.to(`table_${order.table_id}`).emit('ORDER_UPDATED', order);
     }
@@ -230,5 +234,7 @@ router.put('/:id/status', authMiddleware, async (req, res) => {
     res.status(500).json({ error: 'Failed to update order status' });
   }
 });
+
+module.exports = router;
 
 module.exports = router;

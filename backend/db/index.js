@@ -30,8 +30,7 @@ async function transaction(callback) {
 }
 
 async function initializeDatabase() {
-  const client = await pool.connect();
-  try {
+  await transaction(async (client) => {
     await client.query(`
       CREATE TABLE IF NOT EXISTS restaurants (
         id UUID PRIMARY KEY,
@@ -122,7 +121,8 @@ async function initializeDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT chk_status CHECK (status IN ('pending', 'preparing', 'ready', 'served', 'cancelled')),
-        CONSTRAINT chk_payment_status CHECK (payment_status IN ('unpaid', 'paid', 'refunded'))
+        CONSTRAINT chk_payment_status CHECK (payment_status IN ('unpaid', 'paid', 'refunded')),
+        UNIQUE(restaurant_id, order_number)
       );
 
       CREATE TABLE IF NOT EXISTS order_items (
@@ -152,11 +152,7 @@ async function initializeDatabase() {
     if (rows.length === 0) {
       await seedDatabase(client, restaurantId);
     }
-  } catch (err) {
-    console.error('❌ Database Initialization Error:', err);
-  } finally {
-    client.release();
-  }
+  });
 }
 
 async function seedDatabase(client, restaurantId) {

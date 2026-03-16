@@ -14,49 +14,76 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Order must have at least one item' });
     }
 
-    const orderId = uuidv4();
-
     const order = await db.transaction(async (client) => {
-      // Calculate order number
-      const { rows: orderNumRows } = await client.query(
-        'SELECT MAX(order_number) as max_num FROM orders WHERE restaurant_id = $1',
-        [RESTAURANT_ID]
-      );
-      const orderNumber = (parseInt(orderNumRows[0].max_num) || 0) + 1;
+      // 1. Validate Table and get Restaurant ID
+      let restaurantId = RESTAURANT_ID; // Fallback
+      if (table_id) {
+        const { rows: tableRows } = await client.query('SELECT restaurant_id FROM tables WHERE id = $1', [table_id]);
+        if (tableRows.length > 0) {
+          restaurantId = tableRows[0].restaurant_id;
+        } else {
+          throw new Error('Invalid table_id');
+        }
+      }
 
-      // Calculate totals and prepare items
+      // 2. Fetch all menu items for this order in one query
+      const menuItemIds = items.map(i => i.menu_item_id);
+      const { rows: menuItems } = await client.query(
+        'SELECT * FROM menu_items WHERE id = ANY($1)',
+        [menuItemIds]
+      );
+      
+      const menuItemMap = new Map(menuItems.map(mi => [mi.id, mi]));
+
+      // 3. Calculate order number (Atomic within transaction)
+      // Use SELECT ... FOR UPDATE to prevent race conditions in numbering
+      await client.query('SELECT 1 FROM restaurants WHERE id = $1 FOR UPDATE', [restaurantId]);
+      const { rows: orderNumRows } = await client.query(
+        'SELECT COALESCE(MAX(order_number), 0) as max_num FROM orders WHERE restaurant_id = $1',
+        [restaurantId]
+      );
+      const orderNumber = parseInt(orderNumRows[0].max_num) + 1;
+
+      // 4. Create Order
+      const orderId = uuidv4();
       let subtotal = 0;
-      const preparedItems = [];
+      const orderItemsToInsert = [];
+
       for (const item of items) {
-        const { rows: itemRows } = await client.query('SELECT * FROM menu_items WHERE id = $1', [item.menu_item_id]);
-        const menuItem = itemRows[0];
-        if (!menuItem) continue;
-        
-        const qty = item.quantity || 1;
-        subtotal += parseFloat(menuItem.price) * qty;
-        preparedItems.push({
+        const menuItem = menuItemMap.get(item.menu_item_id);
+        if (!menuItem) {
+          throw new Error(`Menu item not found: ${item.menu_item_id}`);
+        }
+
+        const qty = parseInt(item.quantity) || 1;
+        const price = parseFloat(menuItem.price);
+        subtotal += price * qty;
+
+        orderItemsToInsert.push({
           id: uuidv4(),
           order_id: orderId,
           menu_item_id: menuItem.id,
           name: menuItem.name,
-          price: menuItem.price,
+          price: price,
           quantity: qty,
-          special_instructions: item.special_instructions || null,
+          special_instructions: item.special_instructions || null
         });
       }
 
       const tax = subtotal * 0.1;
       const total = subtotal + tax;
 
-      // Insert order
-      await client.query(
+      // Insert Order
+      const { rows: insertedOrderRows } = await client.query(
         `INSERT INTO orders (id, restaurant_id, table_id, order_number, customer_name, customer_notes, subtotal, tax, total)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [orderId, RESTAURANT_ID, table_id, orderNumber, customer_name || null, customer_notes || null, subtotal, tax, total]
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING *`,
+        [orderId, restaurantId, table_id || null, orderNumber, customer_name || null, customer_notes || null, subtotal, tax, total]
       );
+      const insertedOrder = insertedOrderRows[0];
 
-      // Insert order items
-      for (const oi of preparedItems) {
+      // 5. Insert Order Items (Multiple Insertion via loop, or could be unnest)
+      for (const oi of orderItemsToInsert) {
         await client.query(
           `INSERT INTO order_items (id, order_id, menu_item_id, name, price, quantity, special_instructions)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -64,28 +91,30 @@ router.post('/', async (req, res) => {
         );
       }
 
-      // Fetch complete order with table info
-      const { rows: orderRows } = await client.query(
-        `SELECT o.*, t.table_number, t.name as table_name FROM orders o
-         LEFT JOIN tables t ON o.table_id = t.id WHERE o.id = $1`,
-        [orderId]
+      // Fetch final state with table info
+      const { rows: infoRows } = await client.query(
+        `SELECT t.table_number, t.name as table_name FROM tables t WHERE t.id = $1`,
+        [table_id]
       );
-      const finalOrder = orderRows[0];
       
-      const { rows: finalItems } = await client.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
-      finalOrder.items = finalItems;
-
-      return finalOrder;
+      return {
+        ...insertedOrder,
+        items: orderItemsToInsert,
+        table_number: infoRows[0]?.table_number,
+        table_name: infoRows[0]?.table_name
+      };
     });
 
-    // Emit socket events
-    req.io.to(`restaurant_${RESTAURANT_ID}`).emit('NEW_ORDER', order);
-    req.io.to(`kitchen_${RESTAURANT_ID}`).emit('NEW_ORDER', order);
+    // 6. Emit socket events
+    req.io.to(`restaurant_${order.restaurant_id}`).emit('NEW_ORDER', order);
+    req.io.to(`kitchen_${order.restaurant_id}`).emit('NEW_ORDER', order);
 
     res.status(201).json(order);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to create order' });
+    console.error('ORDER_ERROR:', err.message);
+    res.status(err.message.includes('not found') ? 400 : 500).json({ 
+      error: err.message || 'Failed to create order' 
+    });
   }
 });
 

@@ -7,16 +7,18 @@ const router = express.Router();
 const RESTAURANT_ID = process.env.RESTAURANT_ID || 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 // GET /api/menu - public menu with categories and items
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const restaurantId = req.query.restaurant_id || RESTAURANT_ID;
-    const categories = db.prepare(
-      'SELECT * FROM categories WHERE restaurant_id = ? AND is_active = 1 ORDER BY sort_order'
-    ).all(restaurantId);
+    const { rows: categories } = await db.query(
+      'SELECT * FROM categories WHERE restaurant_id = $1 AND is_active = 1 ORDER BY sort_order',
+      [restaurantId]
+    );
 
-    const items = db.prepare(
-      'SELECT * FROM menu_items WHERE restaurant_id = ? AND is_available = 1 ORDER BY sort_order'
-    ).all(restaurantId);
+    const { rows: items } = await db.query(
+      'SELECT * FROM menu_items WHERE restaurant_id = $1 AND is_available = 1 ORDER BY sort_order',
+      [restaurantId]
+    );
 
     const menu = categories.map(cat => ({
       ...cat,
@@ -31,14 +33,15 @@ router.get('/', (req, res) => {
 });
 
 // GET /api/menu/items
-router.get('/items', (req, res) => {
+router.get('/items', async (req, res) => {
   try {
     const restaurantId = req.query.restaurant_id || RESTAURANT_ID;
-    const items = db.prepare(
+    const { rows: items } = await db.query(
       `SELECT mi.*, c.name as category_name FROM menu_items mi
        LEFT JOIN categories c ON mi.category_id = c.id
-       WHERE mi.restaurant_id = ? ORDER BY mi.sort_order`
-    ).all(restaurantId);
+       WHERE mi.restaurant_id = $1 ORDER BY mi.sort_order`,
+      [restaurantId]
+    );
     res.json(items);
   } catch (err) {
     console.error(err);
@@ -47,17 +50,18 @@ router.get('/items', (req, res) => {
 });
 
 // POST /api/menu/items
-router.post('/items', authMiddleware, (req, res) => {
+router.post('/items', authMiddleware, async (req, res) => {
   try {
     const { name, description, price, category_id, is_available, is_featured, prep_time_minutes, image_url } = req.body;
     const id = uuidv4();
-    db.prepare(
+    await db.query(
       `INSERT INTO menu_items (id, restaurant_id, category_id, name, description, price, image_url, is_available, is_featured, prep_time_minutes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, RESTAURANT_ID, category_id, name, description, price, image_url || null, is_available ? 1 : 0, is_featured ? 1 : 0, prep_time_minutes || 15);
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [id, RESTAURANT_ID, category_id, name, description, price, image_url || null, is_available ? 1 : 0, is_featured ? 1 : 0, prep_time_minutes || 15]
+    );
 
-    const item = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(id);
-    res.status(201).json(item);
+    const { rows } = await db.query('SELECT * FROM menu_items WHERE id = $1', [id]);
+    res.status(201).json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create item' });
@@ -65,16 +69,17 @@ router.post('/items', authMiddleware, (req, res) => {
 });
 
 // PUT /api/menu/items/:id
-router.put('/items/:id', authMiddleware, (req, res) => {
+router.put('/items/:id', authMiddleware, async (req, res) => {
   try {
     const { name, description, price, category_id, is_available, is_featured, prep_time_minutes, image_url } = req.body;
-    db.prepare(
-      `UPDATE menu_items SET name = ?, description = ?, price = ?, category_id = ?, image_url = ?,
-       is_available = ?, is_featured = ?, prep_time_minutes = ?, updated_at = datetime('now') WHERE id = ?`
-    ).run(name, description, price, category_id, image_url || null, is_available ? 1 : 0, is_featured ? 1 : 0, prep_time_minutes || 15, req.params.id);
+    await db.query(
+      `UPDATE menu_items SET name = $1, description = $2, price = $3, category_id = $4, image_url = $5,
+       is_available = $6, is_featured = $7, prep_time_minutes = $8, updated_at = CURRENT_TIMESTAMP WHERE id = $9`,
+      [name, description, price, category_id, image_url || null, is_available ? 1 : 0, is_featured ? 1 : 0, prep_time_minutes || 15, req.params.id]
+    );
 
-    const item = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(req.params.id);
-    res.json(item);
+    const { rows } = await db.query('SELECT * FROM menu_items WHERE id = $1', [req.params.id]);
+    res.json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update item' });
@@ -82,9 +87,9 @@ router.put('/items/:id', authMiddleware, (req, res) => {
 });
 
 // DELETE /api/menu/items/:id
-router.delete('/items/:id', authMiddleware, (req, res) => {
+router.delete('/items/:id', authMiddleware, async (req, res) => {
   try {
-    db.prepare('DELETE FROM menu_items WHERE id = ?').run(req.params.id);
+    await db.query('DELETE FROM menu_items WHERE id = $1', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     console.error(err);
@@ -93,12 +98,13 @@ router.delete('/items/:id', authMiddleware, (req, res) => {
 });
 
 // GET /api/menu/categories
-router.get('/categories', (req, res) => {
+router.get('/categories', async (req, res) => {
   try {
     const restaurantId = req.query.restaurant_id || RESTAURANT_ID;
-    const categories = db.prepare(
-      'SELECT * FROM categories WHERE restaurant_id = ? ORDER BY sort_order'
-    ).all(restaurantId);
+    const { rows: categories } = await db.query(
+      'SELECT * FROM categories WHERE restaurant_id = $1 ORDER BY sort_order',
+      [restaurantId]
+    );
     res.json(categories);
   } catch (err) {
     console.error(err);
@@ -107,15 +113,16 @@ router.get('/categories', (req, res) => {
 });
 
 // POST /api/menu/categories
-router.post('/categories', authMiddleware, (req, res) => {
+router.post('/categories', authMiddleware, async (req, res) => {
   try {
     const { name, description, sort_order } = req.body;
     const id = uuidv4();
-    db.prepare(
-      `INSERT INTO categories (id, restaurant_id, name, description, sort_order) VALUES (?, ?, ?, ?, ?)`
-    ).run(id, RESTAURANT_ID, name, description, sort_order || 0);
-    const cat = db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
-    res.status(201).json(cat);
+    await db.query(
+      `INSERT INTO categories (id, restaurant_id, name, description, sort_order) VALUES ($1, $2, $3, $4, $5)`,
+      [id, RESTAURANT_ID, name, description, sort_order || 0]
+    );
+    const { rows } = await db.query('SELECT * FROM categories WHERE id = $1', [id]);
+    res.status(201).json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create category' });

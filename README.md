@@ -14,8 +14,9 @@ A modern, QR-code based restaurant ordering platform built with Next.js, Express
 
 ### [Backend](./backend)
 - **Framework**: Express.js
-- **Database**: SQLite (via better-sqlite3)
+- **Database**: PostgreSQL (via node-postgres)
 - **Real-time**: Socket.io
+- **Features**: ACID transactions for order processing.
 - **Security**: Helmet, Rate Limiting, CORS configuration.
 - **Optimization**: Gzip compression, Morgan logging.
 

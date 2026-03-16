@@ -5,9 +5,10 @@ const { authMiddleware } = require('./auth');
 const router = express.Router();
 
 // GET /api/restaurants/:id
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const restaurant = db.prepare('SELECT * FROM restaurants WHERE id = ?').get(req.params.id);
+    const { rows } = await db.query('SELECT * FROM restaurants WHERE id = $1', [req.params.id]);
+    const restaurant = rows[0];
     if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
     res.json(restaurant);
   } catch (err) {
@@ -17,32 +18,35 @@ router.get('/:id', (req, res) => {
 });
 
 // GET /api/restaurants/:id/stats
-router.get('/:id/stats', authMiddleware, (req, res) => {
+router.get('/:id/stats', authMiddleware, async (req, res) => {
   try {
     const restaurantId = req.params.id;
-    const today = new Date().toISOString().split('T')[0];
 
-    const todayOrders = db.prepare(
-      `SELECT COUNT(*) as count FROM orders WHERE restaurant_id = ? AND date(created_at) = date('now')`
-    ).get(restaurantId);
+    const { rows: todayOrdersRows } = await db.query(
+      `SELECT COUNT(*) as count FROM orders WHERE restaurant_id = $1 AND created_at::date = CURRENT_DATE`,
+      [restaurantId]
+    );
 
-    const activeOrders = db.prepare(
-      `SELECT COUNT(*) as count FROM orders WHERE restaurant_id = ? AND status IN ('pending', 'preparing', 'ready')`
-    ).get(restaurantId);
+    const { rows: activeOrdersRows } = await db.query(
+      `SELECT COUNT(*) as count FROM orders WHERE restaurant_id = $1 AND status IN ('pending', 'preparing', 'ready')`,
+      [restaurantId]
+    );
 
-    const todayRevenue = db.prepare(
-      `SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE restaurant_id = ? AND date(created_at) = date('now') AND status != 'cancelled'`
-    ).get(restaurantId);
+    const { rows: todayRevenueRows } = await db.query(
+      `SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE restaurant_id = $1 AND created_at::date = CURRENT_DATE AND status != 'cancelled'`,
+      [restaurantId]
+    );
 
-    const pendingOrders = db.prepare(
-      `SELECT COUNT(*) as count FROM orders WHERE restaurant_id = ? AND status = 'pending'`
-    ).get(restaurantId);
+    const { rows: pendingOrdersRows } = await db.query(
+      `SELECT COUNT(*) as count FROM orders WHERE restaurant_id = $1 AND status = 'pending'`,
+      [restaurantId]
+    );
 
     res.json({
-      today_orders: String(todayOrders?.count || 0),
-      active_orders: String(activeOrders?.count || 0),
-      today_revenue: String(todayRevenue?.total || 0),
-      pending_orders: String(pendingOrders?.count || 0),
+      today_orders: String(todayOrdersRows[0]?.count || 0),
+      active_orders: String(activeOrdersRows[0]?.count || 0),
+      today_revenue: String(todayRevenueRows[0]?.total || 0),
+      pending_orders: String(pendingOrdersRows[0]?.count || 0),
     });
   } catch (err) {
     console.error(err);

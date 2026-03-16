@@ -9,11 +9,12 @@ const RESTAURANT_ID = process.env.RESTAURANT_ID || 'a0eebc99-9c0b-4ef8-bb6d-6bb9
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 // GET /api/tables
-router.get('/', authMiddleware, (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
   try {
-    const tables = db.prepare(
-      'SELECT * FROM tables WHERE restaurant_id = ? ORDER BY table_number'
-    ).all(RESTAURANT_ID);
+    const { rows: tables } = await db.query(
+      'SELECT * FROM tables WHERE restaurant_id = $1 ORDER BY table_number',
+      [RESTAURANT_ID]
+    );
     res.json(tables);
   } catch (err) {
     console.error(err);
@@ -22,12 +23,14 @@ router.get('/', authMiddleware, (req, res) => {
 });
 
 // GET /api/tables/public/:tableId
-router.get('/public/:tableId', (req, res) => {
+router.get('/public/:tableId', async (req, res) => {
   try {
-    const table = db.prepare('SELECT * FROM tables WHERE id = ?').get(req.params.tableId);
+    const { rows: tableRows } = await db.query('SELECT * FROM tables WHERE id = $1', [req.params.tableId]);
+    const table = tableRows[0];
     if (!table) return res.status(404).json({ error: 'Table not found' });
 
-    const restaurant = db.prepare('SELECT * FROM restaurants WHERE id = ?').get(table.restaurant_id);
+    const { rows: restaurantRows } = await db.query('SELECT * FROM restaurants WHERE id = $1', [table.restaurant_id]);
+    const restaurant = restaurantRows[0];
     res.json({ table, restaurant });
   } catch (err) {
     console.error(err);
@@ -36,15 +39,16 @@ router.get('/public/:tableId', (req, res) => {
 });
 
 // POST /api/tables
-router.post('/', authMiddleware, (req, res) => {
+router.post('/', authMiddleware, async (req, res) => {
   try {
     const { table_number, name, capacity } = req.body;
     const id = uuidv4();
-    db.prepare(
-      'INSERT INTO tables (id, restaurant_id, table_number, name, capacity) VALUES (?, ?, ?, ?, ?)'
-    ).run(id, RESTAURANT_ID, table_number, name, capacity || 4);
-    const table = db.prepare('SELECT * FROM tables WHERE id = ?').get(id);
-    res.status(201).json(table);
+    await db.query(
+      'INSERT INTO tables (id, restaurant_id, table_number, name, capacity) VALUES ($1, $2, $3, $4, $5)',
+      [id, RESTAURANT_ID, table_number, name, capacity || 4]
+    );
+    const { rows } = await db.query('SELECT * FROM tables WHERE id = $1', [id]);
+    res.status(201).json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create table' });
@@ -54,7 +58,8 @@ router.post('/', authMiddleware, (req, res) => {
 // POST /api/tables/:id/qrcode
 router.post('/:id/qrcode', authMiddleware, async (req, res) => {
   try {
-    const table = db.prepare('SELECT * FROM tables WHERE id = ?').get(req.params.id);
+    const { rows } = await db.query('SELECT * FROM tables WHERE id = $1', [req.params.id]);
+    const table = rows[0];
     if (!table) return res.status(404).json({ error: 'Table not found' });
 
     const url = `${FRONTEND_URL}/table/${table.id}`;
@@ -63,7 +68,7 @@ router.post('/:id/qrcode', authMiddleware, async (req, res) => {
       color: { dark: '#000000', light: '#ffffff' }
     });
 
-    db.prepare('UPDATE tables SET qr_code_url = ? WHERE id = ?').run(qrCodeDataUrl, table.id);
+    await db.query('UPDATE tables SET qr_code_url = $1 WHERE id = $2', [qrCodeDataUrl, table.id]);
     res.json({ qr_code_url: qrCodeDataUrl, table_url: url });
   } catch (err) {
     console.error(err);
@@ -74,7 +79,8 @@ router.post('/:id/qrcode', authMiddleware, async (req, res) => {
 // GET /api/tables/:id/qrcode/data
 router.get('/:id/qrcode/data', async (req, res) => {
   try {
-    const table = db.prepare('SELECT * FROM tables WHERE id = ?').get(req.params.id);
+    const { rows } = await db.query('SELECT * FROM tables WHERE id = $1', [req.params.id]);
+    const table = rows[0];
     if (!table) return res.status(404).json({ error: 'Table not found' });
 
     const url = `${FRONTEND_URL}/table/${table.id}`;

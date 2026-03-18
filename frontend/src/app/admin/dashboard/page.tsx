@@ -7,7 +7,7 @@ import { formatCurrency, formatTime, STATUS_COLORS, STATUS_LABELS } from '@/lib/
 import { getSocket, joinRestaurant } from '@/lib/socket';
 import { getUser } from '@/lib/auth';
 
-const RESTAURANT_ID = process.env.NEXT_PUBLIC_RESTAURANT_ID!;
+// RESTAURANT_ID is retrieved from the logged-in user session
 
 interface Stats {
   today_orders: string;
@@ -23,9 +23,14 @@ export default function DashboardPage() {
   const user = getUser();
 
   const loadData = async () => {
+    if (!user?.restaurant_id) {
+      setLoading(false);
+      return;
+    }
+
     try {
       const [statsData, ordersData] = await Promise.all([
-        restaurantApi.getStats(RESTAURANT_ID),
+        restaurantApi.getStats(user.restaurant_id),
         orderApi.getOrders(''),
       ]);
       setStats(statsData as Stats);
@@ -38,9 +43,10 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
+    if (!user?.restaurant_id) return;
     loadData();
     const socket = getSocket();
-    joinRestaurant(RESTAURANT_ID);
+    joinRestaurant(user.restaurant_id);
 
     socket.on('NEW_ORDER', () => loadData());
     socket.on('ORDER_UPDATED', () => loadData());

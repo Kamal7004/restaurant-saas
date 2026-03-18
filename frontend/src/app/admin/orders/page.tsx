@@ -6,9 +6,12 @@ import { Order } from '@/lib/types';
 import { formatCurrency, formatTime, STATUS_COLORS, STATUS_LABELS } from '@/lib/utils';
 import { getSocket, joinRestaurant } from '@/lib/socket';
 
-const RESTAURANT_ID = process.env.NEXT_PUBLIC_RESTAURANT_ID!;
+import { getUser } from '@/lib/auth';
+
+// RESTAURANT_ID is retrieved from the logged-in user session
 
 export default function OrdersPage() {
+  const user = getUser();
   const [orders, setOrders] = useState<Order[]>([]);
   const [filter, setFilter] = useState('');
   const [loading, setLoading] = useState(true);
@@ -24,8 +27,9 @@ export default function OrdersPage() {
   useEffect(() => { loadOrders(); }, [filter]);
 
   useEffect(() => {
+    if (!user?.restaurant_id) return;
     const socket = getSocket();
-    joinRestaurant(RESTAURANT_ID);
+    joinRestaurant(user.restaurant_id);
     socket.on('NEW_ORDER', () => loadOrders());
     socket.on('ORDER_UPDATED', () => loadOrders());
     return () => { socket.off('NEW_ORDER'); socket.off('ORDER_UPDATED'); };

@@ -11,9 +11,14 @@ export default function HomePage() {
           <span className="text-3xl">🍴</span>
           <span className="font-bold text-xl text-dark-900">The Golden Fork</span>
         </div>
-        <Link href="/admin/dashboard" className="bg-brand-500 hover:bg-brand-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors shadow-sm">
-          Admin Login →
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href="/login" className="text-stone-500 hover:text-dark-900 font-semibold text-sm transition-colors">
+            Login
+          </Link>
+          <Link href="/signup" className="bg-brand-500 hover:bg-brand-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors shadow-sm">
+            Sign Up →
+          </Link>
+        </div>
       </nav>
 
       {/* Hero */}
@@ -29,8 +34,8 @@ export default function HomePage() {
             Real-time kitchen display and admin dashboard included.
           </p>
           <div className="flex items-center justify-center gap-4 flex-wrap">
-            <Link href="/admin/dashboard" className="bg-dark-900 hover:bg-dark-800 text-white px-8 py-3.5 rounded-xl font-semibold transition-colors shadow-lg shadow-stone-200">
-              Open Dashboard
+            <Link href="/signup" className="bg-dark-900 hover:bg-dark-800 text-white px-8 py-3.5 rounded-xl font-semibold transition-colors shadow-lg shadow-stone-200">
+              Get Started →
             </Link>
             <Link href="/kitchen" className="bg-white border border-stone-200 hover:border-brand-300 text-dark-900 px-8 py-3.5 rounded-xl font-semibold transition-colors shadow-sm">
               Kitchen Display

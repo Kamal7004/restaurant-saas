@@ -105,7 +105,7 @@ router.post('/signup', async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Signup failed. Please try again.' });
+    res.status(500).json({ error: 'Signup failed', details: err.message });
   }
 });
 

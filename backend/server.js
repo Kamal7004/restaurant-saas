@@ -49,7 +49,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Serve Frontend Static Files
-const FRONTEND_DIR = process.env.FRONTEND_DIR || path.join(__dirname, '../frontend/out');
+const FRONTEND_DIR = path.resolve(process.env.FRONTEND_DIR || path.join(__dirname, '../frontend/out'));
 app.use(express.static(FRONTEND_DIR));
 
 // Attach io to every request
@@ -107,7 +107,7 @@ app.get('*', (req, res) => {
 app.use((err, req, res, next) => {
   const status = err.status || 500;
   const message = err.message || 'Internal server error';
-  
+
   console.error(`[${new Date().toISOString()}] ERROR:`, {
     message,
     status,

@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: v${{ github.run_number }}
+
 jobs:
   build-and-package:
     runs-on: ubuntu-latest
@@ -20,22 +26,22 @@ jobs:
       - name: Install and check Backend
         run: |
           cd backend
-          npm install
+          npm ci
           node --check server.js
           
       - name: Build Frontend
         run: |
           cd frontend
-          npm install
+          npm ci
           npm run build
           
       - name: Package Server
         run: |
-          zip -r server.zip backend -x "backend/node_modules/*" "backend/.env" "backend/restaurant.db*"
+          cd backend && zip -r ../server.zip . -x "node_modules/*" ".env" "restaurant.db*"
           
       - name: Package Client
         run: |
-          zip -r client.zip frontend/.next frontend/public frontend/package.json
+          cd frontend && zip -r ../client.zip .next public package.json
           
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -46,9 +52,11 @@ jobs:
             client.zip
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Release ${{ env.RELEASE_TAG }}
           files: |
             server.zip
             client.zip

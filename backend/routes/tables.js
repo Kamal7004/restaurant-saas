@@ -7,7 +7,7 @@ const { authMiddleware } = require('./auth');
 const { checkRole } = require('./auth');
 
 const router = express.Router();
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const APP_URL = process.env.APP_URL || 'https://food.explisoft.com';
 
 // GET /api/tables
 router.get('/', authMiddleware, checkRole(['admin', 'kitchen']), async (req, res) => {
@@ -32,7 +32,7 @@ router.get('/public/:tableId', async (req, res) => {
     if (!table) return res.status(404).json({ error: 'Table not found' });
 
     const { rows: restaurantRows } = await db.query(
-      'SELECT id, name, slug, logo_url, primary_color, secondary_color, welcome_text FROM restaurants WHERE id = $1', 
+      'SELECT id, name, slug, logo_url, primary_color, secondary_color, welcome_text FROM restaurants WHERE id = $1',
       [table.restaurant_id]
     );
     const restaurant = restaurantRows[0];
@@ -73,8 +73,8 @@ router.post('/:id/qrcode', authMiddleware, checkRole(['admin']), async (req, res
     const table = rows[0];
     if (!table) return res.status(404).json({ error: 'Table not found or unauthorized' });
 
-    const url = `${FRONTEND_URL}/table/${table.id}`;
-    
+    const url = `${APP_URL}/table/${table.id}`;
+
     if (format === 'svg') {
       const svg = await QRCode.toString(url, { type: 'svg', margin: 2 });
       res.set('Content-Type', 'image/svg+xml');
